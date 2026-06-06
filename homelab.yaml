@@ -4,8 +4,7 @@ metadata:
   name: homelab
 
 ---
-
-# ================= STORAGE =================
+# ===================== STORAGE =====================
 
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -17,8 +16,28 @@ spec:
   resources:
     requests:
       storage: 2Gi
-  storageClassName: local-path
-
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: npm-data-pvc
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qbittorrent-pvc
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -30,38 +49,20 @@ spec:
   resources:
     requests:
       storage: 5Gi
-  storageClassName: local-path
-
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: qb-config
+  name: heimdall-pvc
   namespace: homelab
 spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: 5Gi
-  storageClassName: local-path
+      storage: 2Gi
 
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: qb-downloads
-  namespace: homelab
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 20Gi
-  storageClassName: local-path
-
----
-
-# ================= PI-HOLE =================
-
+# ===================== PI-HOLE =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,27 +83,21 @@ spec:
         image: pihole/pihole:latest
         env:
         - name: TZ
-          value: Africa/Johannesburg
+          value: "Africa/Johannesburg"
         - name: WEBPASSWORD
-          value: admin123
+          value: "change-me"
         ports:
         - containerPort: 80
         - containerPort: 53
-          protocol: TCP
         - containerPort: 53
           protocol: UDP
         volumeMounts:
-        - name: etc-pihole
+        - name: pihole-storage
           mountPath: /etc/pihole
-        - name: dnsmasq
-          mountPath: /etc/dnsmasq.d
       volumes:
-      - name: etc-pihole
+      - name: pihole-storage
         persistentVolumeClaim:
           claimName: pihole-pvc
-      - name: dnsmasq
-        emptyDir: {}
-
 ---
 apiVersion: v1
 kind: Service
@@ -116,11 +111,122 @@ spec:
   - name: web
     port: 80
     targetPort: 80
+  - name: dns
+    port: 53
+    targetPort: 53
+  - name: dns-udp
+    port: 53
+    protocol: UDP
+    targetPort: 53
+  externalIPs:
+  - 10.72.48.251
 
 ---
+# ===================== NGINX PROXY MANAGER =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: npm
+  namespace: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: npm
+  template:
+    metadata:
+      labels:
+        app: npm
+    spec:
+      containers:
+      - name: npm
+        image: jc21/nginx-proxy-manager:latest
+        ports:
+        - containerPort: 80
+        - containerPort: 81
+        - containerPort: 443
+        volumeMounts:
+        - name: npm-data
+          mountPath: /data
+      volumes:
+      - name: npm-data
+        persistentVolumeClaim:
+          claimName: npm-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: npm
+  namespace: homelab
+spec:
+  selector:
+    app: npm
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: admin
+    port: 81
+    targetPort: 81
+  - name: https
+    port: 443
+    targetPort: 443
+  externalIPs:
+  - 10.72.48.251
 
-# ================= N8N =================
+---
+# ===================== QBITTORRENT =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qbittorrent
+  namespace: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qbittorrent
+  template:
+    metadata:
+      labels:
+        app: qbittorrent
+    spec:
+      containers:
+      - name: qbittorrent
+        image: lscr.io/linuxserver/qbittorrent:latest
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "Africa/Johannesburg"
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: qb-config
+          mountPath: /config
+      volumes:
+      - name: qb-config
+        persistentVolumeClaim:
+          claimName: qbittorrent-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent
+  namespace: homelab
+spec:
+  selector:
+    app: qbittorrent
+  ports:
+  - port: 8080
+    targetPort: 8080
+  externalIPs:
+  - 10.72.48.251
 
+---
+# ===================== N8N =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -142,20 +248,15 @@ spec:
         ports:
         - containerPort: 5678
         env:
-        - name: N8N_BASIC_AUTH_ACTIVE
-          value: "true"
-        - name: N8N_BASIC_AUTH_USER
-          value: admin
-        - name: N8N_BASIC_AUTH_PASSWORD
-          value: admin123
+        - name: TZ
+          value: "Africa/Johannesburg"
         volumeMounts:
-        - name: n8n-data
+        - name: n8n-storage
           mountPath: /home/node/.n8n
       volumes:
-      - name: n8n-data
+      - name: n8n-storage
         persistentVolumeClaim:
           claimName: n8n-pvc
-
 ---
 apiVersion: v1
 kind: Service
@@ -168,157 +269,92 @@ spec:
   ports:
   - port: 5678
     targetPort: 5678
+  externalIPs:
+  - 10.72.48.251
 
 ---
-
-# ================= QBITTORRENT =================
-
+# ===================== HEIMDALL =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: qbittorrent
+  name: heimdall
   namespace: homelab
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: qbittorrent
+      app: heimdall
   template:
     metadata:
       labels:
-        app: qbittorrent
+        app: heimdall
     spec:
       containers:
-      - name: qbittorrent
-        image: lscr.io/linuxserver/qbittorrent
-        env:
-        - name: PUID
-          value: "1000"
-        - name: PGID
-          value: "1000"
-        - name: WEBUI_PORT
-          value: "8080"
+      - name: heimdall
+        image: linuxserver/heimdall:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 80
         volumeMounts:
-        - name: config
+        - name: heimdall-storage
           mountPath: /config
-        - name: downloads
-          mountPath: /downloads
       volumes:
-      - name: config
+      - name: heimdall-storage
         persistentVolumeClaim:
-          claimName: qb-config
-      - name: downloads
-        persistentVolumeClaim:
-          claimName: qb-downloads
-
+          claimName: heimdall-pvc
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: qbittorrent
+  name: heimdall
   namespace: homelab
 spec:
   selector:
-    app: qbittorrent
+    app: heimdall
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 80
+    targetPort: 80
+  externalIPs:
+  - 10.72.48.251
 
 ---
-
-# ================= RUSTDESK SERVER =================
-
+# ===================== RUSTDESK SERVER =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rustdesk-hbbs
+  name: rustdesk
   namespace: homelab
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: hbbs
+      app: rustdesk
   template:
     metadata:
       labels:
-        app: hbbs
+        app: rustdesk
     spec:
       containers:
-      - name: hbbs
+      - name: rustdesk
         image: rustdesk/rustdesk-server:latest
-        args: ["hbbs"]
         ports:
         - containerPort: 21115
         - containerPort: 21116
-
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: rustdesk-hbbr
-  namespace: homelab
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: hbbr
-  template:
-    metadata:
-      labels:
-        app: hbbr
-    spec:
-      containers:
-      - name: hbbr
-        image: rustdesk/rustdesk-server:latest
-        args: ["hbbr"]
-        ports:
         - containerPort: 21117
-
----
-
-# ================= NGINX PROXY MANAGER =================
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-proxy-manager
-  namespace: homelab
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: npm
-  template:
-    metadata:
-      labels:
-        app: npm
-    spec:
-      containers:
-      - name: npm
-        image: jc21/nginx-proxy-manager:latest
-        ports:
-        - containerPort: 80
-        - containerPort: 81
-        - containerPort: 443
-
+        - containerPort: 21118
+        - containerPort: 21119
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: nginx-proxy-manager
+  name: rustdesk
   namespace: homelab
 spec:
   selector:
-    app: npm
+    app: rustdesk
   ports:
-  - name: http
-    port: 80
-    targetPort: 80
-  - name: admin
-    port: 81
-    targetPort: 81
-  - name: https
-    port: 443
-    targetPort: 443
+  - name: hbbs
+    port: 21115
+  - name: hbbr
+    port: 21116
+  externalIPs:
+  - 10.72.48.251
