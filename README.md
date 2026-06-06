@@ -61,3 +61,23 @@ kubectl get pods -A
 
 kubectl apply -f homelab.yaml
 
+## Storage
+
+You must install a real storage provisioner.
+
+✅ OPTION 1 (BEST for your setup): Rancher local-path
+
+Run:
+
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+🔍 Then confirm:
+kubectl get storageclass
+
+You SHOULD see:
+
+local-path   (default)
+⭐ Make it default (important)
+kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+🔄 Restart everything
+kubectl delete pod -n homelab --all
+
