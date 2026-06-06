@@ -56,3 +56,8 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 Check:
 
 kubectl get pods -A
+
+## Deploy services
+
+kubectl apply -f homelab.yaml
+
