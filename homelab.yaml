@@ -1,29 +1,72 @@
-#!/bin/bash
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homelab
 
-set -e
+---
 
-echo "======================================"
-echo " Homelab Kubernetes Auto Deploy"
-echo "======================================"
+# ================= STORAGE =================
 
-NAMESPACE="homelab"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pihole-pvc
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: local-path
 
-echo "[1/6] Installing ingress-nginx..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.2/deploy/static/provider/cloud/deploy.yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-pvc
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
 
-echo "[2/6] Creating namespace..."
-kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qb-config
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
 
-echo "[3/6] Applying workloads..."
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qb-downloads
+  namespace: homelab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: local-path
 
-cat <<EOF | kubectl apply -f -
+---
 
-# ===================== PIHOLE =====================
+# ================= PI-HOLE =================
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pihole
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
   replicas: 1
   selector:
@@ -37,36 +80,52 @@ spec:
       containers:
       - name: pihole
         image: pihole/pihole:latest
-        ports:
-        - containerPort: 80
-        - containerPort: 53
-          protocol: UDP
         env:
         - name: TZ
           value: Africa/Johannesburg
         - name: WEBPASSWORD
           value: admin123
+        ports:
+        - containerPort: 80
+        - containerPort: 53
+          protocol: TCP
+        - containerPort: 53
+          protocol: UDP
+        volumeMounts:
+        - name: etc-pihole
+          mountPath: /etc/pihole
+        - name: dnsmasq
+          mountPath: /etc/dnsmasq.d
+      volumes:
+      - name: etc-pihole
+        persistentVolumeClaim:
+          claimName: pihole-pvc
+      - name: dnsmasq
+        emptyDir: {}
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: pihole
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
-  type: NodePort
   selector:
     app: pihole
   ports:
-  - port: 80
-    nodePort: 30080
+  - name: web
+    port: 80
+    targetPort: 80
 
-# ===================== N8N =====================
 ---
+
+# ================= N8N =================
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: n8n
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
   replicas: 1
   selector:
@@ -89,12 +148,20 @@ spec:
           value: admin
         - name: N8N_BASIC_AUTH_PASSWORD
           value: admin123
+        volumeMounts:
+        - name: n8n-data
+          mountPath: /home/node/.n8n
+      volumes:
+      - name: n8n-data
+        persistentVolumeClaim:
+          claimName: n8n-pvc
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: n8n
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
   selector:
     app: n8n
@@ -102,13 +169,15 @@ spec:
   - port: 5678
     targetPort: 5678
 
-# ===================== QBittorrent =====================
 ---
+
+# ================= QBITTORRENT =================
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: qbittorrent
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
   replicas: 1
   selector:
@@ -121,22 +190,35 @@ spec:
     spec:
       containers:
       - name: qbittorrent
-        image: linuxserver/qbittorrent
-        ports:
-        - containerPort: 8080
+        image: lscr.io/linuxserver/qbittorrent
         env:
         - name: PUID
           value: "1000"
         - name: PGID
           value: "1000"
-        - name: TZ
-          value: Africa/Johannesburg
+        - name: WEBUI_PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: downloads
+          mountPath: /downloads
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: qb-config
+      - name: downloads
+        persistentVolumeClaim:
+          claimName: qb-downloads
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: qbittorrent
-  namespace: $NAMESPACE
+  namespace: homelab
 spec:
   selector:
     app: qbittorrent
@@ -144,61 +226,65 @@ spec:
   - port: 8080
     targetPort: 8080
 
-# ===================== RUSTDESK =====================
 ---
+
+# ================= RUSTDESK SERVER =================
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rustdesk
-  namespace: $NAMESPACE
+  name: rustdesk-hbbs
+  namespace: homelab
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: rustdesk
+      app: hbbs
   template:
     metadata:
       labels:
-        app: rustdesk
+        app: hbbs
     spec:
       containers:
       - name: hbbs
-        image: rustdesk/rustdesk-server
+        image: rustdesk/rustdesk-server:latest
         args: ["hbbs"]
         ports:
         - containerPort: 21115
         - containerPort: 21116
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustdesk-hbbr
+  namespace: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hbbr
+  template:
+    metadata:
+      labels:
+        app: hbbr
+    spec:
+      containers:
       - name: hbbr
-        image: rustdesk/rustdesk-server
+        image: rustdesk/rustdesk-server:latest
         args: ["hbbr"]
         ports:
         - containerPort: 21117
+
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: rustdesk
-  namespace: $NAMESPACE
-spec:
-  selector:
-    app: rustdesk
-  ports:
-  - name: hbbs
-    port: 21115
-  - name: hbbr
-    port: 21117
 
-EOF
-
-echo "[4/6] Deploying Nginx Proxy Manager (optional UI proxy)..."
-
-cat <<EOF | kubectl apply -f -
+# ================= NGINX PROXY MANAGER =================
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: npm
-  namespace: $NAMESPACE
+  name: nginx-proxy-manager
+  namespace: homelab
 spec:
   replicas: 1
   selector:
@@ -216,35 +302,23 @@ spec:
         - containerPort: 80
         - containerPort: 81
         - containerPort: 443
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: npm
-  namespace: $NAMESPACE
+  name: nginx-proxy-manager
+  namespace: homelab
 spec:
-  type: NodePort
   selector:
     app: npm
   ports:
-  - port: 80
-    nodePort: 30081
-  - port: 81
-    nodePort: 30082
-  - port: 443
-    nodePort: 30443
-
-EOF
-
-echo "[5/6] Waiting for pods..."
-kubectl get pods -n $NAMESPACE -w
-
-echo "[6/6] DONE!"
-echo ""
-echo "Access URLs (replace with your node IP):"
-echo "Pi-hole:       http://<NODE-IP>:30080"
-echo "n8n:           http://<NODE-IP>:5678 (no ingress yet)"
-echo "qBittorrent:   http://<NODE-IP>:8080"
-echo "NPM:           http://<NODE-IP>:30082"
-echo ""
-echo "TIP: Next upgrade -> ingress + domains + HTTPS"
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: admin
+    port: 81
+    targetPort: 81
+  - name: https
+    port: 443
+    targetPort: 443
