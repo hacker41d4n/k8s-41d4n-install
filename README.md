@@ -81,3 +81,20 @@ kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storagec
 🔄 Restart everything
 kubectl delete pod -n homelab --all
 
+## Delete Everything
+
+🧨 OPTION A — Delete EVERYTHING in your homelab (recommended)
+
+This removes:
+
+all apps
+all deployments
+all services
+all PVCs (storage)
+1) Delete all workloads
+kubectl delete all --all -n homelab
+2) Delete storage (VERY important)
+kubectl delete pvc --all -n homelab
+3) Delete namespace (cleanest reset)
+kubectl delete namespace homelab
+
