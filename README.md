@@ -27,3 +27,32 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 Then test:
 
 kubectl get nodes
+
+## Flannel
+1. STOP using sudo with kubectl
+
+Run:
+
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+2. If you insist on sudo (not recommended), force kubeconfig:
+sudo KUBECONFIG=$HOME/.kube/config kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+3. Verify kubeconfig is correct
+
+Run:
+
+echo $KUBECONFIG
+
+Then:
+
+ls -l $HOME/.kube/config
+
+If missing, fix it again:
+
+mkdir -p $HOME/.kube
+sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+🚀 After Flannel installs
+
+Check:
+
+kubectl get pods -A
